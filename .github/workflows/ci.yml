@@ -1,0 +1,79 @@
+name: customer-intelligence-ci
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            pip-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Ingest sample data
+        run: |
+          python -m src.data_pipeline.ingest --bank-sample-size 5000 --complaints-sample-size 5000
+
+      - name: Validate data
+        run: |
+          python -m src.data_pipeline.validate
+
+      - name: Build features
+        run: |
+          python -m src.data_pipeline.features
+
+      - name: Train baseline model
+        run: |
+          python -m src.training.train
+
+      - name: Run promotion gate
+        run: |
+          python -m src.training.evaluate
+
+      - name: Build RAG index
+        run: |
+          python -m src.rag.build_index --max-features 5000
+
+      - name: Run RAG evaluation
+        run: |
+          python -m src.rag.rag_eval --rebuild-index
+
+      - name: Run tests
+        run: |
+          pytest -q
+
+      - name: Upload generated reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-reports
+          path: |
+            docs/*.md
+            data/processed/*report*.json
+            data/processed/rag_eval_results.json
+            models/promotion_report.json

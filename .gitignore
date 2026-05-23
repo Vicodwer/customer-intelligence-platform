@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+mlruns/
+models/
+artifacts/
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+*.pkl
+*.joblib
+*.sqlite
+*.faiss
+*.index

@@ -114,6 +114,26 @@ class AskComplaintsResponse(BaseModel):
     retrieval: dict[str, Any]
 
 
+class CustomerIntelRequest(BaseModel):
+    customer: CustomerFeatures
+    complaint_question: str = Field(
+        default="What are the main complaint themes for this customer segment?",
+        min_length=3,
+    )
+    top_k: int = Field(default=5, ge=1, le=10)
+    min_score: float = Field(default=0.05, ge=0.0, le=1.0)
+    product: str | None = None
+    company: str | None = None
+    issue: str | None = None
+    state: str | None = None
+
+
+class CustomerIntelResponse(BaseModel):
+    conversion: PredictResponse
+    complaint_intelligence: AskComplaintsResponse
+    integration_note: str
+
+
 class HealthResponse(BaseModel):
     status: Literal["ok", "degraded"]
     app_version: str
@@ -306,4 +326,50 @@ def ask_complaints(request: AskComplaintsRequest) -> AskComplaintsResponse:
         raise HTTPException(
             status_code=500,
             detail=f"Complaint answer failed: {exc}",
+        ) from exc
+
+
+@app.post("/customer-intel", response_model=CustomerIntelResponse)
+def customer_intel(request: CustomerIntelRequest) -> CustomerIntelResponse:
+    try:
+        prediction_result = predict(PredictRequest(customer=request.customer))
+
+        complaint_result = answer_complaint_question(
+            question=request.complaint_question,
+            top_k=request.top_k,
+            min_score=request.min_score,
+            product=request.product,
+            company=request.company,
+            issue=request.issue,
+            state=request.state,
+        )
+
+        complaint_response = AskComplaintsResponse(**complaint_result)
+
+        return CustomerIntelResponse(
+            conversion=prediction_result,
+            complaint_intelligence=complaint_response,
+            integration_note=(
+                "This response combines campaign conversion scoring with grounded "
+                "complaint intelligence. Complaint evidence is limited to retrieved "
+                "records and should not be treated as legal or financial advice."
+            ),
+        )
+
+    except HTTPException:
+        raise
+
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Required artifact is not ready: {exc}",
+        ) from exc
+
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Customer intelligence request failed: {exc}",
         ) from exc

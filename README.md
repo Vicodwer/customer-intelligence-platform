@@ -462,15 +462,88 @@ This keeps the repository lightweight and avoids committing raw datasets, traine
 - No SHAP or detailed governance audit yet.
 
 ---
+## Final submission evidence
 
-## Next hardening steps
+### Repository
 
-1. Add `/customer-intel` integration endpoint.
-2. Add ML drift report.
-3. Add RAG monitoring metrics.
-4. Add Dockerfile and Docker Compose.
-5. Add `/batch-score`.
-6. Add deployment evidence.
-7. Add architecture diagram.
-8. Add demo recording.
-9. Add `reflection.md`.
+```text
+https://github.com/Vicodwer/customer-intelligence-platform
+Application type
+
+This project is delivered as a FastAPI backend intelligence platform. It does not include a custom frontend because the brief focused on production ML/RAG services, API endpoints, CI/CD, monitoring, Docker, and deployment evidence.
+
+The application can be used through:
+
+/docs Swagger UI
+PowerShell
+Postman
+a future frontend
+Main API endpoints
+GET  /health
+POST /predict
+POST /batch-score
+POST /ask-complaints
+POST /customer-intel
+Architecture diagram
+
+Architecture is documented in three forms:
+
+docs/architecture.md
+docs/architecture.drawio
+docs/architecture.png
+
+The .drawio file is the diagrams-as-code source artifact. It is XML-based and can be opened in draw.io / diagrams.net. The PNG is the exported visual diagram for demo and README review.
+
+Reports
+docs/model_report.md
+docs/promotion_report.md
+docs/rag_report.md
+docs/monitoring_report.md
+Documentation
+docs/demo_script.md
+docs/submission_checklist.md
+docs/reflection.md
+docs/decision_log.md
+docs/azure_deployment.md
+CI/CD evidence
+
+GitHub Actions runs the full scripted pipeline:
+
+ingest -> validate -> features -> train -> evaluate -> RAG index -> RAG eval -> tests
+
+The latest workflow run is passing.
+
+Docker evidence
+
+Docker artifacts:
+
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+The image was built locally and tested through Docker. The Docker build context was reduced from around 777 MB to around 4.3 MB using .dockerignore.
+
+Azure deployment evidence
+
+Azure deployment was completed using:
+
+Azure Container Registry: custintelacr61776
+Azure Container App: customer-intel-api
+Region: Southeast Asia
+Image: custintelacr61776.azurecr.io/customer-intelligence-platform:latest
+
+The deployed /predict endpoint returned:
+
+prediction      : 0
+probability     : 0.27807927421774736
+decision        : unlikely_to_convert
+conversion_band : low
+model_type      : random_forest_champion
+
+Azure resources may be deleted after screenshots/demo recording to avoid student subscription charges.
+
+Demo video
+
+Loom demo video:
+
+https://www.loom.com/share/a493ee6fc4894035bf30376cca81b947

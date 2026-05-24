@@ -2,163 +2,172 @@
 
 ## Customer Intelligence Platform
 
-This project contains two main intelligence lanes:
+This project is a production-minded Customer Intelligence Platform with two intelligence lanes:
 
-1. **ML lane** for campaign conversion prediction.
-2. **RAG lane** for complaint intelligence with cited evidence IDs.
+1. **ML lane**: predicts campaign conversion for bank marketing customers.
+2. **RAG lane**: answers complaint-intelligence questions with cited complaint evidence IDs.
 
-Both are exposed through a FastAPI service.
+The platform is exposed through a FastAPI backend API and is supported by CI, Docker, monitoring reports, and Azure deployment evidence.
 
 ---
 
-## High-level architecture
+## Architecture diagram artifacts
 
-```mermaid
-flowchart TD
-    A[Public Data Sources] --> B[Data Ingestion Scripts]
+The architecture diagram is stored in two formats:
 
-    B --> C1[Bank Marketing Sample]
-    B --> C2[Complaint Narrative Sample]
+```text
+docs/architecture.drawio
+docs/architecture.png
+architecture.drawio is the diagrams-as-code source file. It is XML-based and can be edited in draw.io / diagrams.net.
+architecture.png is the exported image for README, reports, and demo slides.
+High-level flow
+Public Data Sources
+  -> Data Ingestion
+  -> Data Validation
+  -> Feature Engineering
+  -> ML lane
+  -> RAG lane
+  -> FastAPI Serving Layer
+  -> API Endpoints
 
-    C1 --> D1[Data Validation]
-    C2 --> D1
+The project is script-first. Core tasks run through Python modules instead of notebooks only.
 
-    D1 --> E1[Feature Engineering]
-    E1 --> F1[ML Training]
-    F1 --> G1[Promotion Gate]
-    G1 --> H1[Champion Model Artifact]
-
-    E1 --> F2[Complaint Clean Text]
-    F2 --> G2[RAG Index Build]
-    G2 --> H2[TF-IDF Index + Docstore]
-
-    H1 --> I[FastAPI Service]
-    H2 --> I
-
-    I --> J1[/health]
-    I --> J2[/predict]
-    I --> J3[/batch-score]
-    I --> J4[/ask-complaints]
-    I --> J5[/customer-intel]
-
-    K[GitHub Actions CI] --> B
-    K --> D1
-    K --> E1
-    K --> F1
-    K --> G1
-    K --> G2
-    K --> L[Tests + Reports]
-
-    M[Docker Image] --> I
 ML lane
-Purpose
 
-Predict whether a contacted customer is likely to subscribe to a term deposit.
+The ML lane predicts whether a customer is likely to subscribe to a term deposit.
 
-Flow
-ingest.py
-  -> validate.py
-  -> features.py
-  -> train.py
-  -> evaluate.py
-  -> champion_model.joblib
+Pipeline:
+
+src/data_pipeline/ingest.py
+  -> src/data_pipeline/validate.py
+  -> src/data_pipeline/features.py
+  -> src/training/train.py
+  -> src/training/evaluate.py
+  -> models/champion_model.joblib
   -> /predict and /batch-score
-Model strategy
 
-The project trains:
+Models used:
 
 Dummy baseline
 Logistic regression baseline
 Random forest candidate
 Champion model selected by promotion gate
 
-The promotion gate compares candidate vs baseline using:
+The promotion gate checks PR-AUC, F1, and ROC-AUC before promoting a candidate model. A deliberately worse dummy model is also evaluated and blocked to demonstrate model governance.
 
-PR-AUC improvement
-F1 drop limit
-ROC-AUC drop limit
-
-A deliberately worse dummy model is evaluated and blocked to demonstrate gate behavior.
+The duration feature is excluded because it would cause train-serving leakage.
 
 RAG lane
-Purpose
 
-Answer complaint intelligence questions using retrieved evidence with complaint IDs.
+The RAG lane answers complaint intelligence questions using retrieved complaint evidence.
 
-Flow
-ingest.py
-  -> validate.py
-  -> features.py
-  -> build_index.py
-  -> retrieve.py
-  -> answer.py
+Pipeline:
+
+src/data_pipeline/features.py
+  -> src/rag/build_index.py
+  -> src/rag/retrieve.py
+  -> src/rag/answer.py
   -> /ask-complaints and /customer-intel
-Retrieval strategy
 
-The MVP uses:
+The MVP retrieval layer uses:
 
-Cleaned complaint narratives
-TF-IDF vectorizer
-Nearest-neighbor search
-Evidence previews
-Complaint ID citations
-Refusal when similarity is below threshold
-API layer
+cleaned complaint narratives
+TF-IDF vectorization
+nearest-neighbor retrieval
+evidence previews
+cited complaint IDs
+refusal when evidence is weak
 
-FastAPI exposes:
+This makes the RAG response grounded and testable.
+
+FastAPI service
+
+The serving layer is implemented in:
+
+src/serving/serve.py
+
+Available endpoints:
 
 Endpoint	Purpose
-GET /health	Check app and model readiness
-POST /predict	Score one customer
-POST /batch-score	Score multiple customers
-POST /ask-complaints	Ask complaint intelligence question
-POST /customer-intel	Combine conversion prediction with complaint intelligence
+GET /health	Checks API and model readiness
+POST /predict	Scores one customer
+POST /batch-score	Scores multiple customers
+POST /ask-complaints	Answers complaint intelligence questions
+POST /customer-intel	Combines ML conversion output with complaint intelligence
+
+The project does not include a custom frontend. It is used through FastAPI Swagger UI at /docs, PowerShell, Postman, or a future frontend.
+
 CI/CD
 
-GitHub Actions runs:
+GitHub Actions runs the full validation pipeline:
 
 install dependencies
 ingest sample data
 validate data
 build features
-train baseline model
+train model
 run promotion gate
 build RAG index
 run RAG evaluation
 run tests
-upload reports
-Docker runtime
+upload generated reports
 
-The Docker image runs the full startup pipeline before launching FastAPI:
+Workflow file:
 
-ingest
-validate
-features
-train
-evaluate
-build RAG index
-start uvicorn
+.github/workflows/ci.yml
+Docker and Azure deployment
 
-This makes the container self-contained for demo usage.
+The project is Dockerized with:
 
-Generated artifacts
+Dockerfile
+docker-compose.yml
+.dockerignore
 
-Most generated artifacts are ignored by Git:
+The Docker image was built locally and pushed to Azure Container Registry.
 
-data/raw/
-data/processed/
-models/
-artifacts/
+Azure deployment used:
 
-Important generated reports include:
+Azure Container Registry
+Azure Container Apps
+Region: Southeast Asia
+
+The deployed API successfully served /predict over HTTPS.
+
+Monitoring
+
+Monitoring scripts are stored in:
+
+monitoring/ml_drift.py
+monitoring/rag_monitor.py
+
+Generated monitoring output includes:
+
+data/processed/ml_drift_report.json
+data/processed/rag_monitoring_metrics.json
+docs/monitoring_report.md
+
+The ML monitoring report checks drift scores.
+The RAG monitoring report tracks retrieval hit rate, refusal rate, top score, latency, and estimated answer tokens.
+
+Generated reports
+
+Important reports:
 
 docs/model_report.md
 docs/promotion_report.md
 docs/rag_report.md
 docs/monitoring_report.md
-Known architecture limitations
+Known limitations
 RAG uses TF-IDF instead of dense embeddings.
-No managed vector database yet.
-No cloud-hosted production environment yet.
-No async job queue for batch scoring.
-Docker startup performs full training/indexing, which is useful for reproducibility but slow for production.
+The complaint answer generator is deterministic, not a full LLM.
+Docker startup retrains and rebuilds artifacts for reproducibility, which is slower than a production image with prebuilt artifacts.
+No custom frontend is included.
+No SHAP dashboard or production auth layer is included yet.
+Future improvements
+Add dense embeddings with FAISS or Chroma.
+Add strict LLM answer synthesis with citations.
+Add SHAP or feature importance dashboard.
+Add authentication and rate limiting.
+Add a lightweight web frontend.
+Split Docker build-time artifacts from runtime startup.
+'@ | Set-Content docs\architecture.md -Encoding UTF8

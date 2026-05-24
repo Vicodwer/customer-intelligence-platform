@@ -1,0 +1,10 @@
+services:
+  customer-intel-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: customer-intel-api
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1

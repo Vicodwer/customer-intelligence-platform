@@ -1,7 +1,13 @@
+@'
+.venv
 .venv/
+.git
 .git/
+.github
 .github/
+__pycache__
 __pycache__/
+.pytest_cache
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -9,10 +15,11 @@ __pycache__/
 *.pyo
 *.pyd
 
-data/raw/
-data/processed/
-models/
-artifacts/
+data/raw/*
+data/processed/*
+models/*
+artifacts/*
+mlruns
 mlruns/
 
 .env
@@ -24,3 +31,4 @@ mlruns/
 
 *.zip
 *.log
+'@ | Set-Content .dockerignore -Encoding UTF8

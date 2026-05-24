@@ -134,6 +134,28 @@ class CustomerIntelResponse(BaseModel):
     integration_note: str
 
 
+class BatchScoreRequest(BaseModel):
+    customers: list[CustomerFeatures] = Field(..., min_length=1, max_length=100)
+
+
+class BatchPredictionItem(BaseModel):
+    row_id: int
+    prediction: int
+    probability: float
+    threshold: float
+    decision: Literal["likely_to_convert", "unlikely_to_convert"]
+    conversion_band: Literal["low", "medium", "high"]
+
+
+class BatchScoreResponse(BaseModel):
+    model_version: str
+    model_type: str
+    model_path: str
+    scored_count: int
+    band_counts: dict[str, int]
+    predictions: list[BatchPredictionItem]
+
+
 class HealthResponse(BaseModel):
     status: Literal["ok", "degraded"]
     app_version: str
@@ -296,6 +318,66 @@ def predict(request: PredictRequest) -> PredictResponse:
 
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Prediction failed: {exc}") from exc
+
+
+@app.post("/batch-score", response_model=BatchScoreResponse)
+def batch_score(request: BatchScoreRequest) -> BatchScoreResponse:
+    try:
+        artifact = load_model_artifact()
+        model = artifact["model"]
+        threshold = float(artifact.get("threshold", 0.5))
+
+        rows = [
+            customer_features_to_dataframe(customer)
+            for customer in request.customers
+        ]
+
+        features = pd.concat(rows, ignore_index=True)
+        probabilities = model.predict_proba(features)[:, 1]
+
+        predictions: list[BatchPredictionItem] = []
+        band_counts = {
+            "low": 0,
+            "medium": 0,
+            "high": 0,
+        }
+
+        for row_id, probability in enumerate(probabilities):
+            probability_float = float(probability)
+            prediction = int(probability_float >= threshold)
+            band = probability_to_band(probability_float)
+            band_counts[band] += 1
+
+            predictions.append(
+                BatchPredictionItem(
+                    row_id=row_id,
+                    prediction=prediction,
+                    probability=probability_float,
+                    threshold=threshold,
+                    decision="likely_to_convert"
+                    if prediction == 1
+                    else "unlikely_to_convert",
+                    conversion_band=band,
+                )
+            )
+
+        return BatchScoreResponse(
+            model_version=str(artifact.get("model_version")),
+            model_type=get_model_type(artifact),
+            model_path=get_current_model_path() or "unknown",
+            scored_count=len(predictions),
+            band_counts=band_counts,
+            predictions=predictions,
+        )
+
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Batch scoring failed: {exc}",
+        ) from exc
 
 
 @app.post("/ask-complaints", response_model=AskComplaintsResponse)

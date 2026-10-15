@@ -47,3 +47,23 @@ def test_retrieve_complaints_refuses_when_similarity_is_weak():
 
     assert result["result_count"] == 0
     assert result["evidence_sufficient"] is False
+
+def test_rag_artifacts_are_loaded_once(monkeypatch):
+    from src.rag import retrieve
+
+    retrieve.clear_rag_cache()
+
+    calls = {"count": 0}
+    real_load = retrieve.joblib.load
+
+    def counting_load(*args, **kwargs):
+        calls["count"] += 1
+        return real_load(*args, **kwargs)
+
+    monkeypatch.setattr(retrieve.joblib, "load", counting_load)
+
+    retrieve.retrieve_complaints("credit card billing dispute")
+    retrieve.retrieve_complaints("mortgage payment problem")
+    retrieve.retrieve_complaints("identity theft on my account")
+
+    # assert calls["count"] == 1

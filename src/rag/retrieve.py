@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import argparse
@@ -19,6 +20,36 @@ RAG_METADATA_PATH = RAG_ARTIFACT_DIR / "rag_index_metadata.json"
 
 DEFAULT_TOP_K = 5
 DEFAULT_MIN_SCORE = 0.05
+from functools import lru_cache
+
+def _mtime_ns(path: Path) -> int:
+    """File modification time in ns, or 0 if the file does not exist."""
+    try:
+        return path.stat().st_mtime_ns
+    except FileNotFoundError:
+        return 0
+
+
+@lru_cache(maxsize=1)
+def _load_rag_artifacts_cached(
+    index_mtime_ns: int,
+    docstore_mtime_ns: int,
+    metadata_mtime_ns: int,
+) -> tuple[dict[str, Any], pd.DataFrame, dict]:
+    # The mtime arguments are only the cache key: if build_index rewrites
+    # a file, its mtime changes, the key changes, and we reload once.
+    artifact = joblib.load(RAG_INDEX_PATH)
+    docstore = pd.read_csv(RAG_DOCSTORE_PATH)
+
+    metadata: dict = {}
+    if RAG_METADATA_PATH.exists():
+        metadata = json.loads(RAG_METADATA_PATH.read_text(encoding="utf-8"))
+
+    return artifact, docstore, metadata
+
+
+def clear_rag_cache() -> None:
+    _load_rag_artifacts_cached.cache_clear()
 
 
 def load_rag_artifacts() -> tuple[dict[str, Any], pd.DataFrame, dict]:
@@ -34,14 +65,11 @@ def load_rag_artifacts() -> tuple[dict[str, Any], pd.DataFrame, dict]:
             "Run: python -m src.rag.build_index"
         )
 
-    artifact = joblib.load(RAG_INDEX_PATH)
-    docstore = pd.read_csv(RAG_DOCSTORE_PATH)
-
-    metadata = {}
-    if RAG_METADATA_PATH.exists():
-        metadata = json.loads(RAG_METADATA_PATH.read_text(encoding="utf-8"))
-
-    return artifact, docstore, metadata
+    return _load_rag_artifacts_cached(
+        _mtime_ns(RAG_INDEX_PATH),
+        _mtime_ns(RAG_DOCSTORE_PATH),
+        _mtime_ns(RAG_METADATA_PATH),
+    )
 
 
 def apply_filters(

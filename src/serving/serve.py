@@ -1,5 +1,7 @@
+
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Literal
@@ -11,6 +13,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.rag.answer import answer_complaint_question
 
+
+from src.rag.retrieve import load_rag_artifacts
+logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -250,8 +255,14 @@ def probability_to_band(probability: float) -> Literal["low", "medium", "high"]:
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     try:
         load_model_artifact(force_reload=True)
-    except Exception as exc:
-        print(f"Model failed to load during startup: {exc}")
+    except Exception:
+        logger.exception("Model failed to load during startup")
+
+    # Warm the RAG cache so the first user request is not slow.
+    try:
+        load_rag_artifacts()
+    except Exception:
+        logger.exception("RAG index failed to load during startup")
 
     yield
 

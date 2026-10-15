@@ -1,21 +1,75 @@
-
 from __future__ import annotations
 
+import json
 import logging
+import os
+import re
+import time
+import uuid
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, AsyncIterator, Literal
+from typing import Any, AsyncIterator, Literal, NoReturn
 
 import joblib
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.rag.answer import answer_complaint_question
-
-
 from src.rag.retrieve import load_rag_artifacts
+
+
 logger = logging.getLogger(__name__)
+
+# Holds the current request's ID so any log line or error can reference it.
+request_id_var: ContextVar[str] = ContextVar("request_id", default="-")
+
+_REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,64}")
+
+
+class JsonFormatter(logging.Formatter):
+    """One JSON object per log line, so log tools can parse and filter it."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload: dict[str, Any] = {
+            "ts": datetime.fromtimestamp(record.created, timezone.utc).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "request_id": request_id_var.get(),
+        }
+
+        for key in ("method", "path", "status", "duration_ms"):
+            if hasattr(record, key):
+                payload[key] = getattr(record, key)
+
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+
+        return json.dumps(payload)
+
+
+def configure_logging() -> None:
+    # Attach to our own "src" logger only, so we never clobber the handlers
+    # of uvicorn or pytest.
+    app_logger = logging.getLogger("src")
+
+    if app_logger.handlers:
+        return
+
+    handler = logging.StreamHandler()
+    handler.setFormatter(JsonFormatter())
+
+    app_logger.addHandler(handler)
+    app_logger.setLevel(os.getenv("LOG_LEVEL", "INFO").upper())
+    app_logger.propagate = False
+
+
+configure_logging()
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -94,7 +148,6 @@ class PredictResponse(BaseModel):
     conversion_band: Literal["low", "medium", "high"]
     model_version: str
     model_type: str
-    model_path: str
 
 
 class AskComplaintsRequest(BaseModel):
@@ -155,7 +208,6 @@ class BatchPredictionItem(BaseModel):
 class BatchScoreResponse(BaseModel):
     model_version: str
     model_type: str
-    model_path: str
     scored_count: int
     band_counts: dict[str, int]
     predictions: list[BatchPredictionItem]
@@ -167,7 +219,7 @@ class HealthResponse(BaseModel):
     model_loaded: bool
     model_version: str | None
     model_type: str | None
-    model_path: str | None
+
 
 class ReadinessResponse(BaseModel):
     status: Literal["ready", "not_ready"]
@@ -175,11 +227,10 @@ class ReadinessResponse(BaseModel):
     rag_index_loaded: bool
     model_version: str | None = None
     index_version: str | None = None
-    problems: list[str] = Field(default_factory=list)    
+    problems: list[str] = Field(default_factory=list)
 
 
 _model_artifact: dict[str, Any] | None = None
-_model_path: Path | None = None
 
 
 def select_model_path() -> Path:
@@ -196,7 +247,7 @@ def select_model_path() -> Path:
 
 
 def load_model_artifact(force_reload: bool = False) -> dict[str, Any]:
-    global _model_artifact, _model_path
+    global _model_artifact
 
     if _model_artifact is not None and not force_reload:
         return _model_artifact
@@ -211,7 +262,12 @@ def load_model_artifact(force_reload: bool = False) -> dict[str, Any]:
         raise ValueError(f"Model artifact missing keys: {sorted(missing)}")
 
     _model_artifact = artifact
-    _model_path = model_path
+
+    logger.info(
+        "Loaded model %s from %s",
+        artifact.get("model_version"),
+        model_path.name,
+    )
 
     return artifact
 
@@ -226,13 +282,6 @@ def get_model_type(artifact: dict[str, Any]) -> str:
         return "unknown"
 
     return model.__class__.__name__
-
-
-def get_current_model_path() -> str | None:
-    if _model_path is None:
-        return None
-
-    return str(_model_path.relative_to(PROJECT_ROOT))
 
 
 def customer_features_to_dataframe(customer: CustomerFeatures) -> pd.DataFrame:
@@ -259,6 +308,16 @@ def probability_to_band(probability: float) -> Literal["low", "medium", "high"]:
     return "high"
 
 
+def raise_internal_error(context: str, exc: Exception) -> NoReturn:
+    """Log the real error server-side; give the client only a reference ID."""
+    logger.error(context, exc_info=exc)
+
+    raise HTTPException(
+        status_code=500,
+        detail=f"Internal error. Reference: {request_id_var.get()}",
+    ) from exc
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     try:
@@ -282,6 +341,49 @@ app = FastAPI(
 )
 
 
+@app.middleware("http")
+async def request_context(request: Request, call_next):
+    supplied = request.headers.get("X-Request-ID", "")
+
+    if _REQUEST_ID_PATTERN.fullmatch(supplied):
+        request_id = supplied
+    else:
+        request_id = uuid.uuid4().hex[:12]
+
+    token = request_id_var.set(request_id)
+    started = time.perf_counter()
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception("Unhandled error")
+        response = JSONResponse(
+            status_code=500,
+            content={"detail": f"Internal error. Reference: {request_id}"},
+        )
+    finally:
+        duration_ms = round((time.perf_counter() - started) * 1000, 1)
+
+    # Probe traffic is frequent and noisy, so it only logs at DEBUG.
+    level = logging.DEBUG if request.url.path.startswith("/health") else logging.INFO
+
+    logger.log(
+        level,
+        "request",
+        extra={
+            "method": request.method,
+            "path": request.url.path,
+            "status": response.status_code,
+            "duration_ms": duration_ms,
+        },
+    )
+
+    request_id_var.reset(token)
+    response.headers["X-Request-ID"] = request_id
+
+    return response
+
+
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     try:
@@ -293,7 +395,6 @@ def health() -> HealthResponse:
             model_loaded=True,
             model_version=str(artifact.get("model_version")),
             model_type=get_model_type(artifact),
-            model_path=get_current_model_path(),
         )
 
     except Exception:
@@ -303,8 +404,8 @@ def health() -> HealthResponse:
             model_loaded=False,
             model_version=None,
             model_type=None,
-            model_path=None,
         )
+
 
 @app.get("/health/live")
 def live() -> dict[str, str]:
@@ -344,7 +445,7 @@ def ready(response: Response) -> ReadinessResponse:
         model_version=model_version,
         index_version=index_version,
         problems=problems,
-    )    
+    )
 
 
 @app.post("/predict", response_model=PredictResponse)
@@ -369,14 +470,13 @@ def predict(request: PredictRequest) -> PredictResponse:
             conversion_band=probability_to_band(probability),
             model_version=str(artifact.get("model_version")),
             model_type=get_model_type(artifact),
-            model_path=get_current_model_path() or "unknown",
         )
 
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Prediction failed: {exc}") from exc
+        raise_internal_error("Prediction failed", exc)
 
 
 @app.post("/batch-score", response_model=BatchScoreResponse)
@@ -423,7 +523,6 @@ def batch_score(request: BatchScoreRequest) -> BatchScoreResponse:
         return BatchScoreResponse(
             model_version=str(artifact.get("model_version")),
             model_type=get_model_type(artifact),
-            model_path=get_current_model_path() or "unknown",
             scored_count=len(predictions),
             band_counts=band_counts,
             predictions=predictions,
@@ -433,10 +532,7 @@ def batch_score(request: BatchScoreRequest) -> BatchScoreResponse:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Batch scoring failed: {exc}",
-        ) from exc
+        raise_internal_error("Batch scoring failed", exc)
 
 
 @app.post("/ask-complaints", response_model=AskComplaintsResponse)
@@ -455,19 +551,17 @@ def ask_complaints(request: AskComplaintsRequest) -> AskComplaintsResponse:
         return AskComplaintsResponse(**result)
 
     except FileNotFoundError as exc:
+        logger.error("RAG index not ready", exc_info=exc)
         raise HTTPException(
             status_code=503,
-            detail=f"RAG index is not ready: {exc}",
+            detail="RAG index is not ready.",
         ) from exc
 
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Complaint answer failed: {exc}",
-        ) from exc
+        raise_internal_error("Complaint answer failed", exc)
 
 
 @app.post("/customer-intel", response_model=CustomerIntelResponse)
@@ -501,16 +595,14 @@ def customer_intel(request: CustomerIntelRequest) -> CustomerIntelResponse:
         raise
 
     except FileNotFoundError as exc:
+        logger.error("Required artifact not ready", exc_info=exc)
         raise HTTPException(
             status_code=503,
-            detail=f"Required artifact is not ready: {exc}",
+            detail="A required artifact is not ready.",
         ) from exc
 
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Customer intelligence request failed: {exc}",
-        ) from exc
+        raise_internal_error("Customer intelligence request failed", exc)

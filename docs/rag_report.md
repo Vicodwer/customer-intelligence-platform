@@ -6,7 +6,7 @@ Evaluate whether the complaint intelligence assistant returns grounded answers w
 
 ## Summary
 
-- Created at UTC: 2026-05-23T18:19:46.516707+00:00
+- Created at UTC: 2026-10-15T13:07:34.422457+00:00
 - Total tests: 10
 - Passed: 10
 - Failed: 0
@@ -19,7 +19,7 @@ Evaluate whether the complaint intelligence assistant returns grounded answers w
 | ID | Passed | Refused | Evidence Count | Evidence IDs | Note |
 |---|---:|---:|---:|---|---|
 | rag_eval_001 | True | False | 3 | 2869476, 4952931, 7394845 | PASS: behavior, evidence, and expected terms matched. |
-| rag_eval_002 | True | False | 3 | 3338526, 3421794, 7082890 | PASS: behavior, evidence, and expected terms matched. |
+| rag_eval_002 | True | False | 3 | 3421794, 3338526, 7082890 | PASS: behavior, evidence, and expected terms matched. |
 | rag_eval_003 | True | False | 3 | 6264204, 7305436, 3046595 | PASS: behavior, evidence, and expected terms matched. |
 | rag_eval_004 | True | False | 3 | 5591548, 2860146, 1532232 | PASS: behavior, evidence, and expected terms matched. |
 | rag_eval_005 | True | False | 3 | 6586464, 3827591, 3955472 | PASS: behavior, evidence, and expected terms matched. |

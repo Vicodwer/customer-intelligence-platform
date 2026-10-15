@@ -21,6 +21,7 @@ RAG_METADATA_PATH = RAG_ARTIFACT_DIR / "rag_index_metadata.json"
 DEFAULT_TOP_K = 5
 DEFAULT_MIN_SCORE = 0.05
 from functools import lru_cache
+import numpy as np
 
 def _mtime_ns(path: Path) -> int:
     """File modification time in ns, or 0 if the file does not exist."""
@@ -72,14 +73,15 @@ def load_rag_artifacts() -> tuple[dict[str, Any], pd.DataFrame, dict]:
     )
 
 
-def apply_filters(
-    rows: list[dict],
+def build_filter_mask(
+    docstore: pd.DataFrame,
     product: str | None = None,
     company: str | None = None,
     issue: str | None = None,
     state: str | None = None,
-) -> list[dict]:
-    filtered_rows = rows
+) -> np.ndarray:
+    """Boolean mask of docstore rows that match every filter given."""
+    mask = np.ones(len(docstore), dtype=bool)
 
     filters = {
         "product": product,
@@ -92,16 +94,20 @@ def apply_filters(
         if not value:
             continue
 
-        value_lower = value.lower()
+        if column not in docstore.columns:
+            return np.zeros(len(docstore), dtype=bool)
 
-        filtered_rows = [
-            row
-            for row in filtered_rows
-            if value_lower in str(row.get(column, "")).lower()
-        ]
+        matches = (
+            docstore[column]
+            .fillna("")
+            .astype(str)
+            .str.lower()
+            .str.contains(value.lower(), regex=False)
+            .to_numpy()
+        )
+        mask &= matches
 
-    return filtered_rows
-
+    return mask
 
 def retrieve_complaints(
     query: str,
@@ -118,54 +124,35 @@ def retrieve_complaints(
     artifact, docstore, metadata = load_rag_artifacts()
 
     vectorizer = artifact["vectorizer"]
-    nearest_neighbors = artifact["nearest_neighbors"]
+    matrix = artifact["matrix"]
 
     query_vector = vectorizer.transform([query.strip()])
 
-    n_neighbors = min(max(top_k * 10, top_k), len(docstore))
+    
+    scores = (matrix @ query_vector.T).toarray().ravel()
 
-    distances, indices = nearest_neighbors.kneighbors(
-        query_vector,
-        n_neighbors=n_neighbors,
-    )
-
-    candidate_rows: list[dict] = []
-
-    for distance, index in zip(distances[0], indices[0]):
-        score = 1.0 - float(distance)
-        row = docstore.iloc[int(index)].to_dict()
-        row["_score"] = score
-        candidate_rows.append(row)
-
-    candidate_rows = apply_filters(
-        candidate_rows,
+    
+    mask = build_filter_mask(
+        docstore,
         product=product,
         company=company,
         issue=issue,
         state=state,
     )
 
-    candidate_rows = [
-        row
-        for row in candidate_rows
-        if float(row.get("_score", 0.0)) >= min_score
-    ]
-
-    candidate_rows = sorted(
-        candidate_rows,
-        key=lambda row: float(row.get("_score", 0.0)),
-        reverse=True,
-    )[:top_k]
+    eligible = np.flatnonzero(mask & (scores >= min_score))
+    ranked = eligible[np.argsort(-scores[eligible], kind="stable")][:top_k]
 
     results = []
 
-    for row in candidate_rows:
+    for index in ranked:
+        row = docstore.iloc[int(index)].to_dict()
         narrative = str(row.get("clean_narrative", ""))
 
         results.append(
             {
                 "complaint_id": str(row.get("complaint_id")),
-                "score": round(float(row.get("_score", 0.0)), 4),
+                "score": round(float(scores[index]), 4),
                 "product": row.get("product"),
                 "issue": row.get("issue"),
                 "company": row.get("company"),
@@ -190,7 +177,6 @@ def retrieve_complaints(
         "results": results,
         "evidence_sufficient": len(results) > 0,
     }
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Retrieve complaint evidence.")

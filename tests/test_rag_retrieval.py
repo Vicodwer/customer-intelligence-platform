@@ -67,3 +67,40 @@ def test_rag_artifacts_are_loaded_once(monkeypatch):
     retrieve.retrieve_complaints("identity theft on my account")
 
     # assert calls["count"] == 1
+
+def test_filter_finds_rare_company_before_ranking():
+    import pandas as pd
+
+    build_rag_index(max_features=5000)
+
+    docstore = pd.read_csv(RAG_DOCSTORE_PATH)
+    rare_company = docstore["company"].dropna().value_counts().index[-1]
+
+    result = retrieve_complaints(
+        query="credit card billing dispute account problem",
+        top_k=3,
+        min_score=0.0,
+        company=rare_company,
+    )
+
+   
+    assert result["result_count"] > 0
+    assert all(
+        rare_company.lower() in str(item["company"]).lower()
+        for item in result["results"]
+    )
+
+
+def test_results_are_sorted_by_score():
+    build_rag_index(max_features=5000)
+
+    result = retrieve_complaints(
+        query="credit card billing dispute account problem",
+        top_k=5,
+        min_score=0.01,
+    )
+
+    scores = [item["score"] for item in result["results"]]
+
+    assert len(scores) > 1
+    assert scores == sorted(scores, reverse=True)    

@@ -8,7 +8,7 @@ from typing import Any, AsyncIterator, Literal
 
 import joblib
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.rag.answer import answer_complaint_question
@@ -169,6 +169,14 @@ class HealthResponse(BaseModel):
     model_type: str | None
     model_path: str | None
 
+class ReadinessResponse(BaseModel):
+    status: Literal["ready", "not_ready"]
+    model_loaded: bool
+    rag_index_loaded: bool
+    model_version: str | None = None
+    index_version: str | None = None
+    problems: list[str] = Field(default_factory=list)    
+
 
 _model_artifact: dict[str, Any] | None = None
 _model_path: Path | None = None
@@ -297,6 +305,46 @@ def health() -> HealthResponse:
             model_type=None,
             model_path=None,
         )
+
+@app.get("/health/live")
+def live() -> dict[str, str]:
+    # Liveness: "the process is running". Never checks models, so a
+    # missing artifact can't cause the platform to restart-loop us.
+    return {"status": "alive"}
+
+
+@app.get("/health/ready", response_model=ReadinessResponse)
+def ready(response: Response) -> ReadinessResponse:
+    # Readiness: "safe to send traffic to this replica".
+    problems: list[str] = []
+    model_version: str | None = None
+    index_version: str | None = None
+
+    try:
+        artifact = load_model_artifact()
+        model_version = str(artifact.get("model_version"))
+    except Exception:
+        logger.exception("Readiness check: model unavailable")
+        problems.append("model_unavailable")
+
+    try:
+        _, _, metadata = load_rag_artifacts()
+        index_version = metadata.get("index_version")
+    except Exception:
+        logger.exception("Readiness check: RAG index unavailable")
+        problems.append("rag_index_unavailable")
+
+    if problems:
+        response.status_code = 503
+
+    return ReadinessResponse(
+        status="not_ready" if problems else "ready",
+        model_loaded="model_unavailable" not in problems,
+        rag_index_loaded="rag_index_unavailable" not in problems,
+        model_version=model_version,
+        index_version=index_version,
+        problems=problems,
+    )    
 
 
 @app.post("/predict", response_model=PredictResponse)

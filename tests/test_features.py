@@ -50,3 +50,13 @@ def test_run_feature_engineering_writes_outputs():
     assert len(complaints) >= 4990
     assert "clean_narrative" in complaints.columns
     assert complaints["clean_narrative"].str.len().min() >= 30
+
+def test_clean_text_for_rag_removes_cfpb_redaction_tokens():
+    text = "On XX/XX/2021 XXXX XXXX charged me {$40.00} at XXXX. Date XX/XX/XXXX."
+    cleaned = clean_text_for_rag(text)
+
+    assert "XXXX" not in cleaned
+    assert "XX/XX" not in cleaned
+    assert "2021" in cleaned
+    assert "$40.00" in cleaned
+    assert "charged me" in cleaned    

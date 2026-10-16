@@ -6,7 +6,7 @@ Evaluate whether the complaint intelligence assistant returns grounded answers w
 
 ## Summary
 
-- Created at UTC: 2026-10-16T02:42:25.092245+00:00
+- Created at UTC: 2026-10-16T02:51:33.853576+00:00
 - Total tests: 10
 - Passed: 10
 - Failed: 0
@@ -18,14 +18,14 @@ Evaluate whether the complaint intelligence assistant returns grounded answers w
 
 | ID | Passed | Refused | Evidence Count | Evidence IDs | Note |
 |---|---:|---:|---:|---|---|
-| rag_eval_001 | True | False | 3 | 2869476, 4952931, 7394845 | PASS: behavior, evidence, and expected terms matched. |
+| rag_eval_001 | True | False | 3 | 4952931, 2869476, 7394845 | PASS: behavior, evidence, and expected terms matched. |
 | rag_eval_002 | True | False | 3 | 3421794, 3338526, 7082890 | PASS: behavior, evidence, and expected terms matched. |
-| rag_eval_003 | True | False | 3 | 6264204, 7305436, 3046595 | PASS: behavior, evidence, and expected terms matched. |
-| rag_eval_004 | True | False | 3 | 5591548, 2860146, 1532232 | PASS: behavior, evidence, and expected terms matched. |
-| rag_eval_005 | True | False | 3 | 6586464, 3827591, 3955472 | PASS: behavior, evidence, and expected terms matched. |
-| rag_eval_006 | True | False | 3 | 4494743, 4551140, 2557599 | PASS: behavior, evidence, and expected terms matched. |
+| rag_eval_003 | True | False | 3 | 3741331, 3741334, 6264204 | PASS: behavior, evidence, and expected terms matched. |
+| rag_eval_004 | True | False | 3 | 5591548, 1532232, 2860146 | PASS: behavior, evidence, and expected terms matched. |
+| rag_eval_005 | True | False | 3 | 3827591, 6586464, 3955472 | PASS: behavior, evidence, and expected terms matched. |
+| rag_eval_006 | True | False | 3 | 4494743, 4551140, 3139159 | PASS: behavior, evidence, and expected terms matched. |
 | rag_eval_007 | True | False | 3 | 6719856, 3111059, 6830262 | PASS: behavior, evidence, and expected terms matched. |
-| rag_eval_008 | True | False | 3 | 6069599, 3035332, 2635616 | PASS: behavior, evidence, and expected terms matched. |
+| rag_eval_008 | True | False | 3 | 6457041, 2635616, 3035332 | PASS: behavior, evidence, and expected terms matched. |
 | rag_eval_009 | True | True | 0 |  | PASS: behavior, evidence, and expected terms matched. |
 | rag_eval_010 | True | True | 0 |  | PASS: behavior, evidence, and expected terms matched. |
 

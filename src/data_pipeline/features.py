@@ -152,6 +152,10 @@ def clean_text_for_rag(text: str) -> str:
 
     cleaned = str(text)
 
+    cleaned = re.sub(r"\bXX/XX/(\d{4})\b", r"\1", cleaned)
+    cleaned = re.sub(r"\bX{2,}(?:/X{2,})*\b", " ", cleaned)
+    cleaned = re.sub(r"X{4,}", " ", cleaned)
+
     # Light PII-style redaction. We keep meaning but avoid exposing obvious contact details.
     cleaned = re.sub(r"\b[\w\.-]+@[\w\.-]+\.\w+\b", "[EMAIL]", cleaned)
     cleaned = re.sub(r"\b(?:\+?\d[\d\-\s().]{7,}\d)\b", "[PHONE]", cleaned)

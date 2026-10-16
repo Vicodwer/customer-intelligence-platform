@@ -141,3 +141,42 @@ def test_report_renders_all_sections(real_results):
     assert "# Retrieval evaluation" in text
     assert "Limits of this evaluation" in text
     assert "| tfidf |" in text
+
+
+
+# ---------- paired comparison ----------
+
+
+def _rows(values: list[float]) -> list[dict]:
+    return [
+        {"id": f"q{i}", "precision_at_k": value} for i, value in enumerate(values)
+    ]
+
+
+def test_paired_comparison_counts_wins_losses_and_ties():
+    base = _rows([0.2, 0.4, 0.6, 0.0])
+    other = _rows([0.4, 0.4, 0.2, 0.2])
+
+    result = ev.paired_comparison(base, other)
+
+    assert (result["wins"], result["losses"], result["ties"]) == (2, 1, 1)
+
+
+def test_sign_test_p_value_matches_hand_calculation():
+    # 5 wins and 0 losses: two-sided p = 2 * (1 / 2**5) = 0.0625.
+    result = ev.paired_comparison(_rows([0.0] * 5), _rows([0.2] * 5))
+
+    assert result["sign_test_p"] == pytest.approx(0.0625)
+
+
+def test_sign_test_is_not_significant_for_an_even_split():
+    other = _rows([0.2, 0.2, 0.2, -0.2, -0.2, -0.2])
+    result = ev.paired_comparison(_rows([0.0] * 6), other)
+
+    assert result["sign_test_p"] == pytest.approx(1.0)
+
+
+def test_sign_test_with_no_decided_queries_is_one():
+    result = ev.paired_comparison(_rows([0.2, 0.4]), _rows([0.2, 0.4]))
+
+    assert result["sign_test_p"] == 1.0

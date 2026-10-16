@@ -10,18 +10,22 @@ so they are noisy. See docs/rag_eval.md for the limits of this method.
 Usage:
     python -m src.rag.eval_retrieval
     python -m src.rag.eval_retrieval --write-report
+    python -m src.rag.eval_retrieval --retriever tfidf bm25
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 from collections import Counter
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
 import pandas as pd
 
+from src.rag.bm25 import BM25Index
 from src.rag.retrieve import load_rag_artifacts, retrieve_complaints
 
 
@@ -119,10 +123,29 @@ def tfidf_retriever(query: str, depth: int) -> list[str]:
     return [item["complaint_id"] for item in result["results"]]
 
 
-# Add new retrievers here (BM25, dense embeddings, hybrid) to get a new row
-# in the comparison table.
+@lru_cache(maxsize=2)
+def _bm25_for(index_version: str | None) -> tuple[BM25Index, tuple[str, ...]]:
+    # Keyed on the index version, so rebuilding the RAG index rebuilds this too.
+    _, docstore, _ = load_rag_artifacts()
+
+    texts = docstore["clean_narrative"].fillna("").astype(str).tolist()
+    ids = tuple(docstore["complaint_id"].astype(str))
+
+    return BM25Index(texts), ids
+
+
+def bm25_retriever(query: str, depth: int) -> list[str]:
+    _, _, metadata = load_rag_artifacts()
+    index, ids = _bm25_for(metadata.get("index_version"))
+
+    return [ids[row] for row, _ in index.top(query, depth)]
+
+
+# Add new retrievers here (dense embeddings, hybrid) to get a new row in the
+# comparison table. The first entry is the baseline the others are compared to.
 RETRIEVERS: dict[str, Retriever] = {
     "tfidf": tfidf_retriever,
+    "bm25": bm25_retriever,
 }
 
 
@@ -142,6 +165,40 @@ def summarise(rows: list[dict[str, Any]]) -> dict[str, float]:
         "random_precision": random_precision,
         "lift_over_random": precision / random_precision if random_precision else 0.0,
     }
+
+
+def paired_comparison(
+    baseline_rows: list[dict[str, Any]],
+    other_rows: list[dict[str, Any]],
+) -> dict[str, float]:
+    """Per-query win/loss count of `other` against `baseline` on precision@k.
+
+    The p-value is a two-sided exact sign test: how likely a split this lopsided
+    (or more) is if the two retrievers were equally good. Ties are ignored.
+    """
+    baseline_by_id = {row["id"]: row["precision_at_k"] for row in baseline_rows}
+
+    wins = losses = ties = 0
+
+    for row in other_rows:
+        base = baseline_by_id[row["id"]]
+
+        if row["precision_at_k"] > base:
+            wins += 1
+        elif row["precision_at_k"] < base:
+            losses += 1
+        else:
+            ties += 1
+
+    decided = wins + losses
+
+    if decided == 0:
+        p_value = 1.0
+    else:
+        tail = sum(math.comb(decided, i) for i in range(0, min(wins, losses) + 1))
+        p_value = min(1.0, 2 * tail / 2**decided)
+
+    return {"wins": wins, "losses": losses, "ties": ties, "sign_test_p": p_value}
 
 
 def evaluate(
@@ -217,14 +274,28 @@ def run_evaluation(retriever_names: list[str]) -> dict[str, Any]:
     _, docstore, metadata = load_rag_artifacts()
     queries = load_golden_queries()
 
+    retrievers = {
+        name: evaluate(RETRIEVERS[name], queries, docstore)
+        for name in retriever_names
+    }
+
+    baseline_name = retriever_names[0]
+    comparisons = {
+        name: paired_comparison(
+            retrievers[baseline_name]["per_query"],
+            data["per_query"],
+        )
+        for name, data in retrievers.items()
+        if name != baseline_name
+    }
+
     return {
         "index_version": metadata.get("index_version"),
         "doc_count": int(len(docstore)),
         "query_count": len(queries),
-        "retrievers": {
-            name: evaluate(RETRIEVERS[name], queries, docstore)
-            for name in retriever_names
-        },
+        "reference": baseline_name,
+        "retrievers": retrievers,
+        "comparisons": comparisons,
     }
 
 
@@ -279,6 +350,29 @@ def render_report(results: dict[str, Any]) -> str:
             f"{s['lift_over_random']:.1f}x |"
         )
 
+    comparisons = results.get("comparisons", {})
+
+    if comparisons:
+        baseline = results.get("reference", "baseline")
+        lines += [
+            "",
+            f"## Paired comparison against {baseline}",
+            "",
+            f"For each query, does the retriever get a higher or lower P@{k} than "
+            f"{baseline}? The sign-test p-value says how likely a split this lopsided "
+            "is if the two were equally good. Below 0.05 suggests a real difference; "
+            "with this few queries only large differences reach it.",
+            "",
+            f"| Retriever | Wins | Losses | Ties | Sign-test p |",
+            "|---|---|---|---|---|",
+        ]
+
+        for name, c in comparisons.items():
+            lines.append(
+                f"| {name} | {c['wins']} | {c['losses']} | {c['ties']} | "
+                f"{c['sign_test_p']:.3f} |"
+            )
+
     for name, data in results["retrievers"].items():
         lines += [
             "",
@@ -319,8 +413,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--retriever",
         nargs="+",
-        default=["tfidf"],
+        default=list(RETRIEVERS),
         choices=sorted(RETRIEVERS),
+        help="Retrievers to run. The first is the baseline the others are compared to.",
     )
     parser.add_argument(
         "--write-report",
@@ -344,6 +439,12 @@ def main() -> None:
             f"Hit@{data['k']}={_fmt(s['hit_rate_at_k'])}  "
             f"MRR={_fmt(s['mrr'])}  random={_fmt(s['random_precision'])}  "
             f"lift={s['lift_over_random']:.1f}x"
+        )
+
+    for name, c in results["comparisons"].items():
+        print(
+            f"{name} vs {results['reference']}: wins={c['wins']} losses={c['losses']} "
+            f"ties={c['ties']} sign-test p={c['sign_test_p']:.3f}"
         )
 
     if args.write_report:

@@ -6,7 +6,7 @@ Evaluate whether the complaint intelligence assistant returns grounded answers w
 
 ## Summary
 
-- Created at UTC: 2026-10-16T07:32:17.553143+00:00
+- Created at UTC: 2026-10-17T07:09:40.231870+00:00
 - Total tests: 10
 - Passed: 10
 - Failed: 0

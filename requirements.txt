@@ -11,3 +11,6 @@ joblib
 requests
 certifi
 httpx
+onnxruntime
+tokenizers
+huggingface_hub.

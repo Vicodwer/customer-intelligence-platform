@@ -26,6 +26,8 @@ from typing import Any, Callable
 import pandas as pd
 
 from src.rag.bm25 import BM25Index
+from src.rag.dense import search_dense
+from src.rag.fusion import reciprocal_rank_fusion
 from src.rag.retrieve import load_rag_artifacts, retrieve_complaints
 
 
@@ -143,10 +145,30 @@ def bm25_retriever(query: str, depth: int) -> list[str]:
 
 # Add new retrievers here (dense embeddings, hybrid) to get a new row in the
 # comparison table. The first entry is the baseline the others are compared to.
+def dense_retriever(query: str, depth: int) -> list[str]:
+      return search_dense(query, depth)
+
+
+FUSION_DEPTH = 100
+
+
+def hybrid_retriever(query: str, depth: int) -> list[str]:
+      pool = max(depth, FUSION_DEPTH)
+
+      return reciprocal_rank_fusion(
+          [bm25_retriever(query, pool), dense_retriever(query, pool)],
+          depth=depth,
+      )
+
+
 RETRIEVERS: dict[str, Retriever] = {
-    "tfidf": tfidf_retriever,
-    "bm25": bm25_retriever,
-}
+      "tfidf": tfidf_retriever,
+      "bm25": bm25_retriever,
+      "dense": dense_retriever,
+      "hybrid": hybrid_retriever,
+  }
+
+DEFAULT_RETRIEVERS = ["tfidf", "bm25"]
 
 
 def _mean(values: list[float]) -> float:
@@ -413,7 +435,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--retriever",
         nargs="+",
-        default=list(RETRIEVERS),
+        default=DEFAULT_RETRIEVERS,
         choices=sorted(RETRIEVERS),
         help="Retrievers to run. The first is the baseline the others are compared to.",
     )
